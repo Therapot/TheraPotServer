@@ -2,3 +2,4 @@ Flask
 openai
 google-cloud-texttospeech
 gunicorn
+python-dotenv
