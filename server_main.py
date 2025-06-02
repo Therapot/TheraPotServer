@@ -1,25 +1,30 @@
 import os
 import json
-import openai
+import base64
 from flask import Flask, request, jsonify
 from google.cloud import texttospeech
-import base64
+from openai import OpenAI  # ✅ 최신 방식
+from dotenv import load_dotenv
 
+# 환경변수 로드 (로컬 테스트용, Railway에선 무시됨)
+load_dotenv()
+
+# ✅ OpenAI 클라이언트 객체 생성 (API 키는 환경변수로 자동 인식)
+client = OpenAI()
+
+# Flask 앱 초기화
 app = Flask(__name__)
 
-# API 키
-openai.api_key = os.environ["OPENAI_API_KEY"]
-
-# Google TTS용 서비스 계정 키를 환경변수에서 받아와서 파일로 저장
+# Google TTS 키 저장
 google_json = os.environ.get("GOOGLE_CREDENTIALS")
 with open("service_account.json", "w") as f:
     f.write(google_json)
 os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = "service_account.json"
 
-# Google TTS 클라이언트 초기화
+# Google TTS 클라이언트
 tts_client = texttospeech.TextToSpeechClient()
 
-# 초기 대화 설정
+# 대화 초기 설정
 conversation_history = []
 PLANT_NAME = "기붕이"
 PLANT_TYPE = "물푸레나무"
@@ -32,25 +37,25 @@ system_message = f"""
 """
 conversation_history.append({"role": "system", "content": system_message})
 
-# ✅ 헬스체크용 라우트
+# ✅ 헬스체크
 @app.route("/healthcheck")
 def health():
     return "OK", 200
 
-# 🌱 대화 처리 라우트
+# 🌱 메인 API: 대화 처리
 @app.route('/process', methods=['POST'])
 def process():
     data = request.json
     user_input = data.get('user_input')
     sensor_data = data.get('sensor_data')
 
+    # 센서 상태를 포함한 프롬프트 구성
     status = f"""
     [나의 현재 상태]
     - 햇빛 (조도): {sensor_data['light']}
     - 수분 (습도): {sensor_data['moisture']}
     - 주변 온도: {sensor_data['temperature']}°C
     """
-
     prompt = f"""
     나는 {PLANT_NAME}라는 이름을 가진 {PLANT_TYPE}야.
     사용자가 현재 햇빛, 수분, 주변 온도에 대해 궁금해할 때만 다음 값을 바탕으로 대답해야 해.
@@ -61,7 +66,9 @@ def process():
     """
 
     conversation_history.append({"role": "user", "content": prompt})
-    response = openai.ChatCompletion.create(
+
+    # ✅ 최신 OpenAI 방식으로 GPT 응답 생성
+    response = client.chat.completions.create(
         model="gpt-4o",
         messages=conversation_history,
         temperature=0.8,
@@ -71,16 +78,20 @@ def process():
     reply = response.choices[0].message.content.strip()
     conversation_history.append({"role": "assistant", "content": reply})
 
-    # 🎧 TTS 변환
+    # ✅ Google TTS 변환
     input_text = texttospeech.SynthesisInput(text=reply)
     voice = texttospeech.VoiceSelectionParams(
         language_code="ko-KR",
         ssml_gender=texttospeech.SsmlVoiceGender.NEUTRAL
     )
     audio_config = texttospeech.AudioConfig(audio_encoding=texttospeech.AudioEncoding.MP3)
-    tts_response = tts_client.synthesize_speech(input=input_text, voice=voice, audio_config=audio_config)
+    tts_response = tts_client.synthesize_speech(
+        input=input_text,
+        voice=voice,
+        audio_config=audio_config
+    )
 
-    # 🎵 음성 파일을 base64로 인코딩해서 반환
+    # ✅ MP3를 base64로 변환
     audio_b64 = base64.b64encode(tts_response.audio_content).decode("utf-8")
 
     return jsonify({
