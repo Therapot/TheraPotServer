@@ -69,7 +69,7 @@ def process():
             "content": f"""
 너는 {plant_name}라는 이름의 {plant_type}야.
 {personality}
-이제부터는 항상 이 말투와 성격을 유지해서 사용자와 대화해야 해.
+이제부터는 항상 이 말투와 성격을 유지해서 사용자와 대화해야 해. 대답에 이모티콘은 넣지 말고 자연스럽게 대화해.
 """
         }
         conversation_histories[history_key] = [system_message]
