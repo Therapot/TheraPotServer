@@ -62,7 +62,7 @@ def process():
     {status}
 
     나를 키우는 사람이 나에게 이렇게 말했다: "{user_input}"
-    친근하고 자연스럽게 반응해줘.
+    친근하고 자연스럽게 2-3문장 이내로 반응해줘.
     """
 
     conversation_history.append({"role": "user", "content": prompt})
