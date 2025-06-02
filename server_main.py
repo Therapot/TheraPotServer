@@ -3,9 +3,6 @@ import json
 import openai
 from flask import Flask, request, jsonify
 from google.cloud import texttospeech
-from io import BytesIO
-from pydub import AudioSegment
-from pydub.utils import which
 import base64
 
 app = Flask(__name__)
@@ -19,10 +16,10 @@ with open("service_account.json", "w") as f:
     f.write(google_json)
 os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = "service_account.json"
 
-# ffmpeg 경로 설정
-AudioSegment.converter = which("ffmpeg")
+# Google TTS 클라이언트 초기화
 tts_client = texttospeech.TextToSpeechClient()
 
+# 초기 대화 설정
 conversation_history = []
 PLANT_NAME = "기붕이"
 PLANT_TYPE = "물푸레나무"
@@ -35,10 +32,12 @@ system_message = f"""
 """
 conversation_history.append({"role": "system", "content": system_message})
 
+# ✅ 헬스체크용 라우트
 @app.route("/healthcheck")
 def health():
     return "OK", 200
 
+# 🌱 대화 처리 라우트
 @app.route('/process', methods=['POST'])
 def process():
     data = request.json
@@ -72,12 +71,16 @@ def process():
     reply = response.choices[0].message.content.strip()
     conversation_history.append({"role": "assistant", "content": reply})
 
-    # TTS 변환
+    # 🎧 TTS 변환
     input_text = texttospeech.SynthesisInput(text=reply)
-    voice = texttospeech.VoiceSelectionParams(language_code="ko-KR", ssml_gender=texttospeech.SsmlVoiceGender.NEUTRAL)
+    voice = texttospeech.VoiceSelectionParams(
+        language_code="ko-KR",
+        ssml_gender=texttospeech.SsmlVoiceGender.NEUTRAL
+    )
     audio_config = texttospeech.AudioConfig(audio_encoding=texttospeech.AudioEncoding.MP3)
     tts_response = tts_client.synthesize_speech(input=input_text, voice=voice, audio_config=audio_config)
 
+    # 🎵 음성 파일을 base64로 인코딩해서 반환
     audio_b64 = base64.b64encode(tts_response.audio_content).decode("utf-8")
 
     return jsonify({
@@ -85,5 +88,6 @@ def process():
         "audio_base64": audio_b64
     })
 
+# ✅ 실행
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000)
