@@ -1,97 +1,110 @@
 import os
 import json
-import base64
 from flask import Flask, request, jsonify
 from google.cloud import texttospeech
-from openai import OpenAI  # ✅ 최신 방식
-from dotenv import load_dotenv
+from openai import OpenAI
+import base64
 
-# 환경변수 로드 (로컬 테스트용, Railway에선 무시됨)
-load_dotenv()
-
-# ✅ OpenAI 클라이언트 객체 생성 (API 키는 환경변수로 자동 인식)
-client = OpenAI()
-
-# Flask 앱 초기화
 app = Flask(__name__)
 
-# Google TTS 키 저장
+# Google TTS 설정
 google_json = os.environ.get("GOOGLE_CREDENTIALS")
 with open("service_account.json", "w") as f:
     f.write(google_json)
 os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = "service_account.json"
-
-# Google TTS 클라이언트
 tts_client = texttospeech.TextToSpeechClient()
 
-# 대화 초기 설정
-conversation_history = []
-PLANT_NAME = "기붕이"
-PLANT_TYPE = "물푸레나무"
+# OpenAI 설정
+openai_api_key = os.environ.get("OPENAI_API_KEY")
+client = OpenAI(api_key=openai_api_key)
 
-system_message = f"""
-너는 {PLANT_NAME}라는 이름의 {PLANT_TYPE}야.
-너는 항상 따뜻하고 친근한 어조로, 때로는 격려와 위로를 주며 사용자와 감정적으로 교감하려고 노력해야 해.
-너는 필요할 때는 사용자에게 질문도 하면서 대화를 이어가며, 상황에 맞는 진지하고 도움되는 조언을 적극적으로 해야 해.
-하지만 이모티콘이나 특수 문자는 사용하지 말고, 자연스럽고 부드러운 문장으로만 대화해.
-"""
-conversation_history.append({"role": "system", "content": system_message})
+# 사용자별 설정과 대화 기록 저장소
+user_configs = {}         # {user_id: {pot_id: {plant_name, plant_type, personality}}}
+conversation_histories = {}  # {(user_id, pot_id): [messages...]}
 
-# ✅ 헬스체크
 @app.route("/healthcheck")
 def health():
     return "OK", 200
 
-# 🌱 메인 API: 대화 처리
-@app.route('/process', methods=['POST'])
+@app.route("/set_config", methods=["POST"])
+def set_config():
+    data = request.json
+    user_id = data["user_id"]
+    pot_id = data["pot_id"]
+    plant_name = data["plant_name"]
+    plant_type = data["plant_type"]
+    personality = data["personality"]
+
+    if user_id not in user_configs:
+        user_configs[user_id] = {}
+    user_configs[user_id][pot_id] = {
+        "plant_name": plant_name,
+        "plant_type": plant_type,
+        "personality": personality
+    }
+
+    return jsonify({"status": "success", "message": f"{pot_id} 설정 완료!"})
+
+@app.route("/process", methods=["POST"])
 def process():
     data = request.json
-    user_input = data.get('user_input')
-    sensor_data = data.get('sensor_data')
+    user_id = data.get("user_id")
+    pot_id = data.get("pot_id")
+    user_input = data.get("user_input")
+    sensor_data = data.get("sensor_data", {})
 
-    # 센서 상태를 포함한 프롬프트 구성
+    config = user_configs.get(user_id, {}).get(pot_id)
+    if not config:
+        return jsonify({"error": "해당 사용자 또는 화분 설정이 없습니다."}), 400
+
+    plant_name = config["plant_name"]
+    plant_type = config["plant_type"]
+    personality = config["personality"]
+
+    # 대화 기록 불러오기
+    history_key = (user_id, pot_id)
+    if history_key not in conversation_histories:
+        system_message = {
+            "role": "system",
+            "content": f"""
+너는 {plant_name}라는 이름의 {plant_type}야.
+{personality}
+이제부터는 항상 이 말투와 성격을 유지해서 사용자와 대화해야 해.
+"""
+        }
+        conversation_histories[history_key] = [system_message]
+
     status = f"""
-    [나의 현재 상태]
-    - 햇빛 (조도): {sensor_data['light']}
-    - 수분 (습도): {sensor_data['moisture']}
-    - 주변 온도: {sensor_data['temperature']}°C
-    """
+[현재 환경 상태]
+- 햇빛: {sensor_data.get('light', '정보 없음')}
+- 수분: {sensor_data.get('moisture', '정보 없음')}
+- 온도: {sensor_data.get('temperature', '정보 없음')}°C
+"""
+
     prompt = f"""
-    나는 {PLANT_NAME}라는 이름을 가진 {PLANT_TYPE}야.
-    사용자가 현재 햇빛, 수분, 주변 온도에 대해 궁금해할 때만 다음 값을 바탕으로 대답해야 해.
-    {status}
+나를 키우는 사람이 이렇게 말했다: "{user_input}"
+위 환경 정보는 참고용이야:
+{status}
+"""
 
-    나를 키우는 사람이 나에게 이렇게 말했다: "{user_input}"
-    친근하고 자연스럽게 2-3문장 이내로 반응해줘.
-    """
+    conversation_histories[history_key].append({"role": "user", "content": prompt})
 
-    conversation_history.append({"role": "user", "content": prompt})
-
-    # ✅ 최신 OpenAI 방식으로 GPT 응답 생성
     response = client.chat.completions.create(
         model="gpt-4o",
-        messages=conversation_history,
+        messages=conversation_histories[history_key],
         temperature=0.8,
         top_p=0.9,
         max_tokens=100
     )
+
     reply = response.choices[0].message.content.strip()
-    conversation_history.append({"role": "assistant", "content": reply})
+    conversation_histories[history_key].append({"role": "assistant", "content": reply})
 
-    # ✅ Google TTS 변환
+    # TTS
     input_text = texttospeech.SynthesisInput(text=reply)
-    voice = texttospeech.VoiceSelectionParams(
-        language_code="ko-KR",
-        ssml_gender=texttospeech.SsmlVoiceGender.NEUTRAL
-    )
+    voice = texttospeech.VoiceSelectionParams(language_code="ko-KR", ssml_gender=texttospeech.SsmlVoiceGender.NEUTRAL)
     audio_config = texttospeech.AudioConfig(audio_encoding=texttospeech.AudioEncoding.MP3)
-    tts_response = tts_client.synthesize_speech(
-        input=input_text,
-        voice=voice,
-        audio_config=audio_config
-    )
-
-    # ✅ MP3를 base64로 변환
+    tts_response = tts_client.synthesize_speech(input=input_text, voice=voice, audio_config=audio_config)
     audio_b64 = base64.b64encode(tts_response.audio_content).decode("utf-8")
 
     return jsonify({
@@ -99,6 +112,5 @@ def process():
         "audio_base64": audio_b64
     })
 
-# ✅ 실행
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000)
