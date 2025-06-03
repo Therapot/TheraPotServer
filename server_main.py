@@ -19,7 +19,7 @@ openai_api_key = os.environ.get("OPENAI_API_KEY")
 client = OpenAI(api_key=openai_api_key)
 
 # 사용자별 설정과 대화 기록 저장소
-user_configs = {}         # {user_id: {pot_id: {plant_name, plant_type, personality}}}
+user_configs = {}  # {user_id: {pot_id: {plant_name, plant_type, personality}}}
 conversation_histories = {}  # {(user_id, pot_id): [messages...]}
 
 @app.route("/healthcheck")
@@ -61,34 +61,38 @@ def process():
     plant_type = config["plant_type"]
     personality = config["personality"]
 
-    # 대화 기록 불러오기
+    # 환경 상태 요약
+    status = f"""
+햇빛: {sensor_data.get('light', '정보 없음')}
+수분: {sensor_data.get('moisture', '정보 없음')}
+온도: {sensor_data.get('temperature', '정보 없음')}°C
+"""
+
+    # 대화 기록 초기화 (처음 요청 시)
     history_key = (user_id, pot_id)
     if history_key not in conversation_histories:
         system_message = {
             "role": "system",
             "content": f"""
-너는 {plant_name}라는 이름의 {plant_type}야.
+너는 '{plant_name}'라는 이름의 '{plant_type}'야.
 {personality}
-이제부터는 항상 이 말투와 성격을 유지해서 사용자와 대화해야 해. 대답에 이모티콘은 넣지 말고 자연스럽게 대화해.
+
+항상 너다운 말투와 성격을 유지해서 사용자와 대화해.
+이모티콘은 쓰지 말고 자연스럽게 대화해.
+
+아래는 네 현재 상태야. 사용자가 물어보거나 관련된 맥락일 때만 자연스럽게 반영해줘:
+{status}
 """
         }
         conversation_histories[history_key] = [system_message]
 
-    status = f"""
-[현재 환경 상태]
-- 햇빛: {sensor_data.get('light', '정보 없음')}
-- 수분: {sensor_data.get('moisture', '정보 없음')}
-- 온도: {sensor_data.get('temperature', '정보 없음')}°C
-"""
+    # 사용자 입력 추가
+    conversation_histories[history_key].append({
+        "role": "user",
+        "content": user_input
+    })
 
-    prompt = f"""
-나를 키우는 사람이 이렇게 말했다: "{user_input}"
-사용자가 현재 햇빛, 수분, 주변 온도에 대해 궁금해할 때만 다음 값을 바탕으로 대답해야 해:
-{status}
-"""
-
-    conversation_histories[history_key].append({"role": "user", "content": prompt})
-
+    # GPT 응답 생성
     response = client.chat.completions.create(
         model="gpt-4o",
         messages=conversation_histories[history_key],
@@ -96,11 +100,10 @@ def process():
         top_p=0.9,
         max_tokens=100
     )
-
     reply = response.choices[0].message.content.strip()
     conversation_histories[history_key].append({"role": "assistant", "content": reply})
 
-    # TTS
+    # TTS 변환
     input_text = texttospeech.SynthesisInput(text=reply)
     voice = texttospeech.VoiceSelectionParams(language_code="ko-KR", ssml_gender=texttospeech.SsmlVoiceGender.NEUTRAL)
     audio_config = texttospeech.AudioConfig(audio_encoding=texttospeech.AudioEncoding.MP3)
@@ -114,3 +117,4 @@ def process():
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000)
+
