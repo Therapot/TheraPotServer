@@ -22,8 +22,12 @@ client = OpenAI(api_key=openai_api_key)
 EXPECTED_TOKEN = os.environ.get("SECRET_TOKEN")
 
 def verify_token(data):
-    token = data.get("secret_token")
-    return token == EXPECTED_TOKEN
+    return data.get("secret_token") == EXPECTED_TOKEN
+
+def print_masked(data: dict):
+    """secret_token 마스킹 처리 후 출력"""
+    masked = {k: ("***" if "token" in k.lower() else v) for k, v in data.items()}
+    print(masked)
 
 # 사용자별 설정과 대화 기록 저장소
 user_configs = {}  # {user_id: {pot_id: {plant_name, plant_type, personality}}}
@@ -36,6 +40,8 @@ def health():
 @app.route("/set_config", methods=["POST"])
 def set_config():
     data = request.json
+    print_masked(data)
+
     if not verify_token(data):
         return jsonify({"error": "인증 실패"}), 403
 
@@ -61,6 +67,8 @@ def set_config():
 @app.route("/process", methods=["POST"])
 def process():
     data = request.json
+    print_masked(data)
+
     if not verify_token(data):
         return jsonify({"error": "인증 실패"}), 403
 
