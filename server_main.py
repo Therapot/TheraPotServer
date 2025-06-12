@@ -18,6 +18,13 @@ tts_client = texttospeech.TextToSpeechClient()
 openai_api_key = os.environ.get("OPENAI_API_KEY")
 client = OpenAI(api_key=openai_api_key)
 
+# 토큰 인증 설정
+EXPECTED_TOKEN = os.environ.get("SECRET_TOKEN")
+
+def verify_token(data):
+    token = data.get("secret_token")
+    return token == EXPECTED_TOKEN
+
 # 사용자별 설정과 대화 기록 저장소
 user_configs = {}  # {user_id: {pot_id: {plant_name, plant_type, personality}}}
 conversation_histories = {}  # {(user_id, pot_id): [messages...]}
@@ -29,11 +36,17 @@ def health():
 @app.route("/set_config", methods=["POST"])
 def set_config():
     data = request.json
-    user_id = data["user_id"]
-    pot_id = data["pot_id"]
-    plant_name = data["plant_name"]
-    plant_type = data["plant_type"]
-    personality = data["personality"]
+    if not verify_token(data):
+        return jsonify({"error": "인증 실패"}), 403
+
+    user_id = data.get("user_id")
+    pot_id = data.get("pot_id")
+    plant_name = data.get("plant_name")
+    plant_type = data.get("plant_type")
+    personality = data.get("personality")
+
+    if not user_id or not pot_id or not plant_name or not plant_type or not personality:
+        return jsonify({"error": "필수 항목이 누락되었습니다."}), 400
 
     if user_id not in user_configs:
         user_configs[user_id] = {}
@@ -48,10 +61,16 @@ def set_config():
 @app.route("/process", methods=["POST"])
 def process():
     data = request.json
+    if not verify_token(data):
+        return jsonify({"error": "인증 실패"}), 403
+
     user_id = data.get("user_id")
     pot_id = data.get("pot_id")
     user_input = data.get("user_input")
     sensor_data = data.get("sensor_data", {})
+
+    if not user_id or not pot_id or not user_input:
+        return jsonify({"error": "필수 항목이 누락되었습니다."}), 400
 
     config = user_configs.get(user_id, {}).get(pot_id)
     if not config:
@@ -78,7 +97,7 @@ def process():
 {personality}
 
 항상 너다운 말투와 성격을 유지해서 사용자와 대화해.
-이모티콘은 쓰지 말고 자연스럽게 대화해. 너무 길지 않게게 대답해.
+이모티콘은 쓰지 말고 자연스럽게 대화해. 너무 길지 않게 대답해.
 
 아래는 네 현재 상태야. 사용자가 물어보거나 관련된 맥락일 때만 자연스럽게 반영해줘:
 {status}
@@ -117,4 +136,3 @@ def process():
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000)
-
